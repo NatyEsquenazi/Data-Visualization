@@ -1,0 +1,413 @@
+---
+title: "Mapeando datos. Dibujando mapas"
+output: html_notebook
+---
+
+```{r warning=FALSE, include=FALSE}
+library(sf)
+library(tidyverse)
+```
+
+## Objetivos
+- Aprender nuevos tipos de gráficos (nuevas `geoms_`)
+- Entender algunos problemas de la representación de datos espaciales
+- Introducir algunos aspectos de las escalas de color
+
+Los mapas de coropletas muestran regiones geográficas coloreadas, sombreadas o clasificadas según alguna variable. Son visualmente impactantes, especialmente cuando las unidades espaciales del mapa son entidades familiares, como los países de la Unión Europea o estados de los EE. UU. Pero mapas como este a veces también pueden ser engañosos. Aunque no es un Sistema de Información Geográfica (SIG) dedicado, R puede trabajar con datos geográficos y ggplot puede hacer mapas de coropletas. Pero también consideraremos otras formas de representar datos como este.
+
+La siguiente figura muestra una serie de mapas de los resultados de las elecciones generales de Estados Unidos de 2012. 
+Primero, un mapa de dos colores a nivel de estado donde el margen de victoria puede ser alto (un azul o rojo más oscuro) o bajo (un azul o rojo más claro). El esquema de color no tiene punto medio. 
+
+<img src="https://socviz.co/assets/ch-07-election-state-1.png", width="10px"/>
+
+
+En segundo lugar, vemos mapas de dos colores a nivel de condado de color rojo o azul, según el ganador. 
+<img src="https://socviz.co/assets/ch-07-election-county.png"/>
+
+El tercero es un mapa a nivel de condado donde el color de los condados rojo y azul se clasifica según el tamaño del porcentaje de votos. Nuevamente, la escala de colores no tiene un punto medio. 
+<img src="https://socviz.co/assets/ch-07-election-county-share.png"/>
+
+El cuarto es un mapa a nivel de condado con un degradado de color continuo de azul a rojo, pero que pasa por un punto medio violeta para las áreas donde el saldo de la votación es casi uniforme. 
+<img src="https://socviz.co/assets/ch-07-election-county-purple.png"/>
+
+En quinto lugar, tenemos un mapa que distorsiona los límites geográficos comprimiéndolos o inflándolos para reflejar la población del condado que se muestra.
+<img src="https://socviz.co/assets/ch-07-election-county-purple-pop.png"/>
+
+
+Finalmente, vemos un cartograma, donde los estados se dibujan usando mosaicos cuadrados, y el número de mosaicos que obtiene cada estado es proporcional al número de votos del colegio electoral que tiene (que a su vez es proporcional a la población de ese estado).
+<img src="https://socviz.co/assets/ch-07-election-electoral-college-cartogram.png"/>
+
+Cada uno de estos mapas muestra datos para el mismo evento, pero las impresiones que transmiten son muy diferentes. Cada uno se enfrenta a dos problemas principales. 
+
+
+- las cantidades de interés subyacentes son solo parcialmente espaciales. El número de votos obtenidos en el colegio electoral y la proporción de votos emitidos dentro de un estado o condado se expresan en términos espaciales, pero en última instancia, lo que importa es el número de personas dentro de esas regiones. 
+
+- las regiones en sí son de tamaños muy diferentes y difieren de una manera que no está bien correlacionada con las magnitudes de los votos subyacentes. Los creadores de mapas también enfrentan opciones que surgirían en muchas otras representaciones de los datos. 
+
+¿Queremos mostrar quién ganó cada estado en términos absolutos (esto es todo lo que importa para el resultado real, al final) o queremos indicar qué tan cerca estuvo la carrera? ¿Queremos mostrar los resultados en un nivel de resolución más fino que el relevante para el resultado, como el conteo del condado en lugar del estado? ¿Cómo podemos transmitir que diferentes puntos de datos pueden tener pesos muy diferentes, porque representan un número mucho mayor o menor de personas? 
+
+Es bastante complicado transmitir estas opciones de forma honesta con diferentes colores y tamaños de forma en un diagrama de dispersión simple. A menudo, un mapa es como una cuadrícula extraña a la que te ves obligado a ajustarte aunque sabes que tergiversa sistemáticamente lo que quieres mostrar.
+
+
+## Mapeando los saldos migratorios en Argentina
+
+Veamos un ejemplo vernáculo. A continuación vamos a cargar un dataset que contiene los [saldos migratorios (es decir, la diferencia entre inmigrantes y emigrantes)](https://es.wikipedia.org/wiki/Saldo_migratorio) de cada departamento de la Argentina. Contiene también la población total medida según los censos de 2001 y 2010, las defunciones y nacimientos producidos entre 2001 y 2010. 
+
+Asimimsmo, contiene variables de identificación de departamento, provincia y región.
+
+```{r}
+migr <- read_csv('https://github.com/gefero/idaes_viz/blob/main/data/proc/PLANIF_saldos_migratorios.csv?raw=true')
+```
+
+Lo primero que debemos tratar de recordaracerca de los datos espaciales es que no necesariamente debemos represetarlos de forma espacial. Por supuesto, las representaciones espaciales pueden ser muy útiles y, a veces, absolutamente necesarias. 
+Pero podemos comenzar con una gráfica de puntos a nivel de provincina, facetada por región y, en muchos casos, esa forma de presentar la información va a ser mucho más efectiva que un mapa. 
+
+
+```{r fig.height=7, fig.width=5}
+migr %>%
+  group_by(region, provincia) %>%
+  summarise(saldos_prov = sum(saldo_migratorio)/sum(pob_esperables)*1000) %>%
+  mutate(pos_neg = ifelse(saldos_prov >0, 'pos', 'neg')) %>%
+  ggplot(aes(x=saldos_prov, y=reorder(provincia, saldos_prov))) +
+    geom_point(aes(color=pos_neg), show.legend = FALSE) +
+    geom_vline(xintercept = 0.0, color='grey50') +
+    scale_x_continuous(breaks = c(-50,0,200),
+                              labels = c("-50", "0", "200")) +
+    facet_wrap(~region, scales='free_y', ncol=1) +
+    theme_minimal()
+```
+
+
+Este gráfico reúne muchos aspectos de la construcción del gráfico en los que hemos trabajado hasta ahora, incluida la subconjunto de datos, el reordenamiento de los resultados por una segunda variable y el uso de un formateador de escala. También introduce algunas opciones nuevas, como permitir escalas libres en un eje y establecer manualmente el color de una estética.
+
+Dividimos el proceso de construcción en varios pasos
+
+1. 
+```
+  migr %>%
+  group_by(region, provincia) %>%
+  summarise(saldos_prov = sum(saldo_migratorio)/sum(pob_esperables)*1000) %>%
+  mutate(pos_neg = ifelse(saldos_prov >0, 'pos', 'neg'))
+```
+
+¿Qué hicimos acá?
+
+2. 
+``` 
+    ggplot(aes(x=saldos_prov, y=reorder(provincia, saldos_prov))) +
+    geom_point(aes(color=pos_neg), show.legend = FALSE) +
+    geom_vline(xintercept = 0.0, color='grey50') +
+    scale_x_continuous(breaks = c(-50,0,200),
+                              labels = c("-50", "0", "200")) +
+    facet_wrap(~region, scales='free_y', ncol=1) +
+    theme_minimal()
+ ```
+
+¿Y acá?
+
+### Datos cartográficos en R
+Una primera cosa que debemos tener en cuenta es que es MUY sencillo trabajar con mapas en R (y en general en la mayoría de los lenguajes centrados en análisis de datos). Dejó de ser un área reservada para los especialistas en SIG o "giseres". También empezaron a aparecer una cantidad enorme de fuentes digitales georreferenciadas, particularmente impulsadas por Google Map como exponente más conocido.
+
+En R contamos con varios paquetes que nos van a hacer más fácil trabajar con información espacial. 
+
+#### Proyecciones
+El primer problema con que nos vamos a encontrar es lo que se llama la "proyección". En este apartado, le robamos impunemente unas cuántas ideas a [Antonio Vázquez Brust](https://bitsandbricks.github.io/) y su [libro](https://bitsandbricks.github.io/ciencia_de_datos_gente_sociable/).
+
+El chiste de un dato georreferenciado es que, justamente, aparece ubicado sobre un punto o una superficie del mapa. Ahora bien, realizar esa representación no es tan fácil. La tierra no tiene una forma regular. Ya conocemos la historia (real o más o menos) del término "geoide" (o dicho de otra forma, "forma de tierra"). La tierra tiene forma de geoide (lo que es un tanto tautológico...). Pero la idea es que no es una espera sino que está aplantada en los polos y "estirada" en el centro dificultando la matemática necesaria para comparar posiciones y medir distancias. A su vez, al pasar del mundo real (en 3D) al papel o la pantalla (en 2D) tenemos unos cuantos problemas. En términos generales, estos problemas se solucionan utilizando algún sistema de coordenadas de referencia (CRS por sus siglas _in english_) y las proyecciones.
+
+Son simplemente sistemas de números que definen ubicaciones sobre la superficie terrerestre. El tipo de CRS más conocido es el que usa latitud y longitud, para definir posiciones en los ejes norte-sur y este-oeste.
+
+Las proyecciones cartográficas son instrucciones para traducir a un plano la disposición de puntos ubicados en la esfera terrestre. Algo así como las instrucciones para dibujar en dos dimensiones las disposición de fronteras, accidentes geográficos, calles o cualquier otro objeto que se extiende sobre la superficie curva del planeta. Como en toda traducción, hay algo que se pierde en el proceso. Todo los mapas “mienten”, en el sentido en que presentan una versión distorsionada de la superficie de terrestre. Esto es inevitable; no existe forma de pasar de la esfera al plano sin distorsionar la forma, la superficie, la distancia o la dirección de los rasgo geográficos. Existen muchísimas proyecciones distintas, cada una pensada para minimizar alguno de los tipos de distorsión, o para encontrar una solución de compromiso que los balancee.
+
+#### Formatos de archivo
+Otro problema va a ser el formato de los archivos para trabajar. Seguramente, el más común sea el llamado “shapefile”, inventado por la empresa ESRI (los creadores del software ArcGIS). Tiene unos cuantos problemas de "comodidad", básciamente porque guarda la ifnormación en siferentes archivos: 
+
+- uno que contiene la cartografía propiamente dicha (`.shp`)
+- otro que contiene los datos a georreferenciar (`.dbf`); este es tremendo porque los nombres de las variables en un shapefile deben tener 10 caracteres o menos, lo que facilita el uso de abreviaturas ininteligibles
+- otros con información complementaria
+
+En general se combinan en un archivo `.zip` lo cual es un tanto incómodo para su distribución. Aquí vamos a usar un formato alternativo que carece de estas limitaciones: el `.geojson`.
+
+#### Ahora sí, mapeando en R
+
+Ahora, la idea (como suele ser habitual) es poder volcar la información en un mapa. Para ello, tenemos que cargar la cartografía, previamente.
+
+```{r}
+deptos <- read_sf('https://github.com/gefero/idaes_viz/blob/main/data/proc/pxdptodatosok.geojson?raw=true')
+deptos
+```
+Veamos la estructura del archivo:
+
+- `Simple feature collection with 527 features and 10 fields`: Cargamos una colección de “simple features” (entidades geométricas en la jerga de la cartografía digital), compuesta por 527 "unidades" y 10  campos.
+- `geometry type: MULTIPOLYGON`: los archivos con información geográfica contienen colecciones de puntos, de líneas, o de polígonos. En éste caso son polígonos; tiene sentido para la información que esperamos, que es la de la superficie total de Argentina dividida en sus departamentos.
+- `dimension: XY`: la información es “plana”, en dos dimensiones X e Y. No incluye información de alturas, que estaría en la dimensión Z. 
+- `bbox: xmin: -74.02985 ymin: -90 xmax: -25.02314 ymax: -21.74506`: nos da cuatro valores que forman una “caja” (bounding box), el rectángulo que contiene todos los datos. Estos valores son la latitud mínima, la longitud mínima, la latitud máxima y la longitud máxima del conjunto de datos. Sólo es útil cuando tenemos mucha práctica y ya reconocemos lugares por sus coordenadas.
+- `Geodetic CRS:  WGS 84`: nuestros datos usan el sistema de coordenadas WGS84, también conocido por su código EPSG 4326. Es el mismo que usan los sistemas GPS, Google Maps, y las aplicaciones de internet en general. Es importante prestar atención al sistemas de coordenadas, o CRS, ya que para comparar datos geográficos de distintas fuentes todas deben usar el mismo.
+
+Hagamos una primera observación del archivo:
+
+```{r}
+deptos %>%
+  ggplot() + 
+    geom_sf(data=deptos)
+```
+Fíjense cómo podemos utilizar la función `geom_sf` para plotear en `ggplot`, objetos espaciales.
+
+Ahora bie, vemos que tenemos incluido en este mapa un polígono enorme: la Antártida. Dado que no tenemos datos sobre saldos migratorios, vamos a eliminarlo. Como verán podemos hacerlo con la sintaxis `tidy` que venimos trabajando desde la primera clase: 
+
+```{r}
+deptos <- deptos %>%
+        filter(! link %in% c('94028', '94021'))
+
+deptos %>%
+  ggplot() + 
+    geom_sf(data=deptos)
+```
+
+
+El paso siguiente es vincular la cartografía con la tabla de datos. Podemos hacerlo, una vez más, usando la sintaxis de tidyverse ya vista. Simplemente, hacemos un `left_join` sobre `migr`.
+
+```{r}
+migr <- deptos %>%
+        select(link) %>%
+        left_join(migr, by='link')
+```
+
+Bien, ya tenemos los datos listos para trabajar.
+
+Vamos, entonces, a realizar un primer mapa para las regiones que mencionamos más arriba
+
+```{r}
+migr %>%
+  group_by(provincia) %>%
+  summarise(saldos_prov = sum(saldo_migratorio)/sum(pob_esperables)*1000) %>%
+  ggplot() + 
+        geom_sf(aes(fill=saldos_prov), color=NA) +
+        scale_fill_viridis_c() + 
+        labs(fill='Tasa migratoria') +
+        theme_minimal()
+
+```
+
+ Sin embargo, nos está faltando el agrupamiento en regiones. Podemos hacerlo de un manera bien simple:
+ 
+```{r}
+regiones <- migr %>%
+                select(region) %>%
+                group_by(region) %>%
+                summarise()
+```
+ 
+Con esta sintaxis generamos una nueva cartografía agrupada por región. Podemos agregarla como una capa más:
+
+```{r}
+migr %>%
+  group_by(provincia) %>%
+  summarise(saldos_prov = sum(saldo_migratorio)/sum(pob_esperables)*1000) %>%
+  ggplot() + 
+        geom_sf(aes(fill=saldos_prov), color=NA) +
+        geom_sf(data=regiones, color='red', fill=NA) + 
+        scale_fill_viridis_c() + 
+        labs(fill='Tasa migratoria') +
+        theme_minimal()
+
+```
+
+Intentemos, ahora, aproximarnos a los dotplots anteriores pero en forma cartográfica:
+
+```{r}
+migr %>%
+  group_by(region, provincia) %>%
+  summarise(saldos_prov = sum(saldo_migratorio)/sum(pob_esperables)*1000) %>%
+  mutate(pos_neg = ifelse(saldos_prov >0, 'pos', 'neg')) %>%
+  ggplot() + 
+        geom_sf(aes(fill=pos_neg)) +
+        geom_sf(data=regiones, color='red', fill=NA) + 
+        labs(fill='Tasa migratoria') +
+        theme_minimal()
+```
+
+
+#### Analizando la informacion por departamento
+Ahora bien, sabemos que las provincias tienen diferentes tamaños y densidades. Este problema se replica a diferntes escalas. Los mapas más detallados (por ejemplo, a nivel departamento o radio censal) puede ser bonitos estéticamente porque dan detalle a los agregados nacionales o provinciales, pero puede ser engañosos. Cuando presentamos mapas es muy importante tener en cuenta que la CABA (que, por ejemplo, no aparece en la escala que estamos trabajado, aunque sí está en nuestra data) o Tucumán son jurisdicciones sumamente pequeñas en relación al resto del país y entre sí. Asimismo sus denisdades poblacionales también difieren sustantivamente. Un problema similar ocurre cuando mapeemos la información a nivel departamento, como veremos enseguida.
+
+En términos generales, cuando ploteamos información geográfica tenemos que estar atentos a este efecto. Veamos, entonces, un mapa a nivel departamento de las tasas migratorias entre 2000 y 2010:
+
+```{r}
+migr %>%
+  ggplot() + 
+    geom_sf(aes(fill=tasa_migracion)) +
+    labs(fill='Tasa migratoria') +
+    theme_minimal()
+```
+
+Acá vemos varios problemas. Vamos a tratar de enumerarlos.
+
+- las líneas divisorias de departamento
+- la escala de color: ¿qué problema ven?
+- ¿algún otro problema?
+
+#### Las líneas internas
+EL grosor de la línea que traza las fronteras entre departamentos hace difícil determinar el color de relleno. Esto suele pasar cuando se grafica información geográfica de "alta resolución". De hecho, en mapas de radios censales este problema es notablemente más fuerte. Una solución es definir el color de la línea como NA, que para ggplot significa “ninguno”. Lo hacemos así:
+
+```{r}
+migr %>%
+  ggplot() + 
+    geom_sf(aes(fill=tasa_migracion), color=NA) +
+    labs(fill='Tasa migratoria') +
+    theme_minimal()
+```
+
+(Esto ya lo habíamos hecho, _sotto voce_ en los primeros mapas).
+
+De forma consistente con la sintaxis de `ggplot`, definimos el color por fuera de `aes()`. Cuando queremos asignar un valor fijo a alguno de los atributos estéticos (y no dependiente de una variable) siempre va fuera de la función `aes()`.
+Mejor... pero sigue sin estar perfecto.
+
+#### Escala de colores
+Como vemos, la escala de colores varía en luminosidad en el chroma azul: cuánto más claro, mayor es el saldo migratorio y cuánto más oscuro, menor. No parece ser la mejor, en tanto y en cuanto, no nos está permitiendo ver diferencias en los valores más bajos. Todo el NEA y el NOA se ven exactamente del mismo color.
+
+Probemos una escala ya clásica, la [vieja y querida viridis](https://bids.github.io/colormap/):
+
+```{r}
+migr %>%
+  ggplot() + 
+    geom_sf(aes(fill=tasa_migracion), color=NA) +
+    labs(fill='Tasa migratoria') +
+    scale_fill_viridis_c() +
+    theme_minimal()
+```
+
+Ok, mejor bastante. Es importante recordar (lo vimos en la primera clase) cómo una escala de color afecta fuertemente la percepción de un gráfico. Y esto es particularmente fuerte en las escalas.
+
+Pero seguimos teniendo problemas. Hagamos una primera inspección de la variable en cuestion.
+
+```{r}
+migr %>%
+  ggplot() +
+    geom_histogram(aes(x=tasa_migracion), bins=40) +
+    theme_minimal()
+```
+
+Vemos que hay algunos pocos departamentos con valores muy altos de saldos migratorios (digamos, superiores a 30 por mil). ¿Cuáles serían? 
+
+Esto está llevando a nuestra escala de colores a tener que usar colores muy luminosos (en el caso de la primera escala) o muy amarillos (en el caso de viridis) para representar pocos registros. Podríamos intentar solucionar esto truncando los valores extremos:
+
+```{r}
+migr <- migr %>%
+  mutate(tasa_migracion_tr = case_when(
+                           tasa_migracion >= 25 ~ 25,
+                           TRUE ~ tasa_migracion
+  ))
+```
+
+Y ahora revisemos el mapa nuevamente:
+
+```{r}
+migr %>%
+  ggplot() + 
+    geom_sf(aes(fill=tasa_migracion_tr), color=NA) +
+    labs(fill='Tasa migratoria') +
+    scale_fill_viridis_c() +
+    theme_minimal()
+```
+
+Ahora logramos percibir muchas más diferencias. NOA y NEA que aparecían como muy homogéneos muestran ahora diferencias más claras.
+
+Pero, si recordamos la primera clase, habíamos hablado de la existencia cierta correspondencia con
+
+- Cualitativas 
+Secuenciales
+
+Pero había una tercera clase de escaalas de color: las divergentes. Si bien el uso de estas escalas es complejo porque puede resultar engañoso, en este caso resultan bastante útiles: tenemos una variable cuantitativa pero que varía entre valores positivos y negativos.
+
+Hay una gran cantidad de [escalas en ggplot](https://ggplot2.tidyverse.org/reference/scale_brewer.html). 
+A partir de la estética `scale_fill_distiller()` podemos definir el `type` de escala que queremos:
+
+-  `"qual"` para escalas cualitativas
+-  `"seq"` para secuenciales
+- `"div"` para divergentes
+
+A su vez, a partir del argumento `palette` podemos definir cuál de todas las escalas de cada tipo queremos usar.
+
+```{r}
+migr %>%
+  ggplot() + 
+    geom_sf(aes(fill=tasa_migracion_tr), color=NA) +
+    labs(fill='Tasa migratoria') +
+    scale_fill_distiller(
+                  type = "div",
+                  palette = "Spectral") +
+    theme_minimal()
+```
+
+Ok. Esta es bastante fiera. Vamos a probar con una más customizada. Para customizar escalas pueden usar como guía el sitio de [Color Brewer](https://colorbrewer2.org/#type=diverging&scheme=BrBG&n=11). La idea, en este caso, es setear la escala de colores de la siguiente forma:
+
+Vamos a usar la función `scale_fill_gradient2` que se va a encargar de mapear los datos a los colores.
+- `low` nos permite pasarle cuál va a ser el color que va a mapearse con los valores mínimos de nuestra data
+- `high`, hace lo mismo para los valores máximos
+- `mid` establece el punto medio de la escala
+- `na.values` mapea un color para los missing
+
+
+```{r}
+migr %>%
+  ggplot() + 
+    geom_sf(aes(fill=tasa_migracion_tr), color=NA) +
+    labs(fill='Tasa migratoria') +
+  scale_fill_gradient2(
+            low = "#a6611a",
+            mid = "#f5f5f5",
+            high = "#018571",
+            na.value = "grey50") +
+    theme_minimal()
+```
+
+Vemos ahora cómo las zonas que tiene valores cercanos a cero (es decir, zonas en las que el peso de los inmigrantes y emigrantes es similar) se van hacia el blanco, el punto medio de la escala.
+
+
+#### Complejizando un poco más: usando la estética `alpha` para mapear otra variable
+
+Antes de cerrar este notebook quisiéramos realizar un último ejercicio. Como vemos, en cualquier tipo de escala de color que utilicemos algunos departamentos de la Patagonia aparecen como los principales receptores de población. Sin embargo, nos acecha el problema eterno: esos departamentos son enormes en terminos de superficie pero escasos en términos de población.
+
+Existen ciertas formas (cartogramas) para tratar este problema. Pero vamos a tratar de hacerlo de otra forma. Vamos a mapear la transparencia de los polígonos a la densidad poblacional.
+
+Primero, creamos una columna con la variable densidad:
+
+```{r}
+migr <- migr %>%
+  mutate(densidad = cnpv_2001 / as.numeric(st_area(geometry))/1000000)
+```
+
+Y ahora simplemente, mapeamos `alpha` a la nueva variable creada:
+
+```{r}
+migr %>%
+  ggplot() + 
+    geom_sf(aes(fill=tasa_migracion_tr,
+                alpha=densidad), color=NA, show.legend=FALSE) +
+    labs(fill='Tasa migratoria') +
+  scale_fill_gradient2(
+            low = "#a6611a",
+            mid = "#f5f5f5",
+            high = "#018571",
+            na.value = "grey50") +
+    theme_minimal()
+```
+
+¿Qué problema tenemos? La densidad tiene una distribución medio feita... Medio exponencial o algo así. Entonces, nos apaga todo el mapa.
+
+¿Qué hacemos con exponenciales? ¡Logaritmos! Entonces, en lugar de vincular el alpha con la densidad, lo hacemos con el logaritmo.
+
+```{r fig.height=10, fig.width=10}
+migr %>%
+  ggplot() + 
+    geom_sf(aes(fill=tasa_migracion_tr,
+                alpha=log10(densidad)), color=NA, show.legend = FALSE) +
+    labs(fill='Tasa migratoria') +
+  scale_fill_gradient2(
+            low = "#a6611a",
+            mid = "#f5f5f5",
+            high = "#018571",
+            na.value = "grey50") +
+    theme_minimal()
+```
