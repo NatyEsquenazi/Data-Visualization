@@ -4,8 +4,17 @@ output: html_notebook
 ---
 
 ```{r warning=FALSE, include=FALSE}
-library(sf)
 library(tidyverse)
+library(htmltools)
+library(sf)
+```
+
+```{r}
+library(Rcpp)
+```
+
+```{r}
+install.packages("Rcpp")
 ```
 
 ## Objetivos
@@ -59,7 +68,7 @@ Asimimsmo, contiene variables de identificación de departamento, provincia y re
 migr <- read_csv('https://github.com/gefero/idaes_viz/blob/main/data/proc/PLANIF_saldos_migratorios.csv?raw=true')
 ```
 
-Lo primero que debemos tratar de recordaracerca de los datos espaciales es que no necesariamente debemos represetarlos de forma espacial. Por supuesto, las representaciones espaciales pueden ser muy útiles y, a veces, absolutamente necesarias. 
+Lo primero que debemos tratar de recordar acerca de los datos espaciales es que no necesariamente debemos represetar los de forma espacial. Por supuesto, las representaciones espaciales pueden ser muy útiles y, a veces, absolutamente necesarias. 
 Pero podemos comenzar con una gráfica de puntos a nivel de provincina, facetada por región y, en muchos casos, esa forma de presentar la información va a ser mucho más efectiva que un mapa. 
 
 
@@ -83,25 +92,26 @@ Este gráfico reúne muchos aspectos de la construcción del gráfico en los que
 Dividimos el proceso de construcción en varios pasos
 
 1. 
-```
-  migr %>%
+```{r}
+migr %>%
   group_by(region, provincia) %>%
   summarise(saldos_prov = sum(saldo_migratorio)/sum(pob_esperables)*1000) %>%
   mutate(pos_neg = ifelse(saldos_prov >0, 'pos', 'neg'))
 ```
 
+
 ¿Qué hicimos acá?
 
 2. 
-``` 
-    ggplot(aes(x=saldos_prov, y=reorder(provincia, saldos_prov))) +
+```{r}
+ ggplot(aes(x=saldos_prov, y=reorder(provincia, saldos_prov))) +
     geom_point(aes(color=pos_neg), show.legend = FALSE) +
     geom_vline(xintercept = 0.0, color='grey50') +
     scale_x_continuous(breaks = c(-50,0,200),
                               labels = c("-50", "0", "200")) +
     facet_wrap(~region, scales='free_y', ncol=1) +
     theme_minimal()
- ```
+```
 
 ¿Y acá?
 
